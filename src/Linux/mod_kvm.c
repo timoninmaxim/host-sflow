@@ -14,6 +14,7 @@ extern "C" {
   typedef struct _HSPVMState_KVM {
     HSPVMState vm; // superclass: must come first
     int virDomainId;
+    char nova_name[100];
   } HSPVMState_KVM;
 
   typedef struct _HSP_mod_KVM {
@@ -50,7 +51,15 @@ extern "C" {
 	// host ID
 	SFLCounters_sample_element hidElem = { 0 };
 	hidElem.tag = SFLCOUNTERS_HOST_HID;
-	const char *hname = virDomainGetName(domainPtr); // no need to free this one
+        const char *hname;
+        if ( *state->nova_name ) {
+	  hname = state->nova_name; // no need to free this one
+          myDebug(1, "agentCB_getCounters_KVM: use nova_name: %s", hname);
+        } else {
+	  hname = virDomainGetName(domainPtr); // no need to free this one
+          myDebug(1, "agentCB_getCounters_KVM: use instance name: %s", hname);
+        }
+
 	if(hname) {
 	  // copy the name out here so we can free it straight away
 	  hidElem.counterBlock.host_hid.hostname.str = (char *)hname;
@@ -207,6 +216,7 @@ extern "C" {
   */
 
   static int domain_xml_path_equal(xmlNode *node, char *nodeName, ...) {
+    myDebug(1, "Parse xml node %s", (char *)node->name);
     if(node == NULL
        || node->name == NULL
        || node->type != XML_ELEMENT_NODE
@@ -285,8 +295,21 @@ extern "C" {
     if(node->children) domain_xml_disk(node->children, disk_path, disk_dev);
   }
 
+  static void domain_xml_nova_name(xmlNode *n, HSPVMState_KVM *state) {
+    if (domain_xml_path_equal(n, "name", "instance", "metadata", "domain", NULL)) {
+      xmlChar *nova_name;
+      nova_name = xmlNodeGetContent(n);
+      if (nova_name) {
+	myDebug(1, "domain_xml_nova_name: extract name: %s", nova_name);
+        strcpy(state->nova_name, (const char *) nova_name);
+        xmlFree(nova_name);
+      } 
+    }
+  }
+
   static void domain_xml_node(HSP *sp, xmlNode *node, HSPVMState_KVM *state) {
     for(xmlNode *n = node; n; n = n->next) {
+      domain_xml_nova_name(n, state);
       if(domain_xml_path_equal(n, "interface", "devices", "domain", NULL)) {
 	char *ifname=NULL,*ifmac=NULL;
 	domain_xml_interface(n, &ifname, &ifmac);
